@@ -10,7 +10,7 @@ st.set_page_config(page_title="Prince David's RAG Chatbot", layout="wide")
 st.title("🧠 Prince David's RAG Chatbot")
 
 # ---------- GEMINI CLIENT ----------
-client = genai.Client(api_key=st.secrets["AIzaSyB2_wj3KSNsRkaBtw2tGIxbSzjKBY6DgQA"])
+client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
 
 # ---------- CACHE VECTOR DB ----------
 @st.cache_resource
