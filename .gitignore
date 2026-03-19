@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+faiss_index/
+.env
+.DS_Store
