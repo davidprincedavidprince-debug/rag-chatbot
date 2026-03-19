@@ -67,7 +67,7 @@ if prompt := st.chat_input("Ask something about your data..."):
 
                     if chunks:
                         context = "\n\n".join([
-    d.page_content for c in chunks
+                            c.page_content for c in chunks
                         ])
                     else:
                         context = ""
@@ -77,7 +77,7 @@ if prompt := st.chat_input("Ask something about your data..."):
                     docs = retriever.invoke(prompt)
 
                     context = "\n\n".join([
-    d.page_content for d in docs
+                        d.page_content for d in docs
                     ])
 
                 # ---------- PROMPT ----------
@@ -108,14 +108,9 @@ Answer:
                 ).text
 
             except Exception as e:
-                response = f"⚠️ Error: {str EQ we(e)}"
+                response = f"⚠️ Error: {str(e)}"
 
             # ---------- DISPLAY ----------
             st.markdown(response)
-
-            # ---------- SHOW SOURCES ----------
-            if context:
-                with st.expander("📄 Sources"):
-                    st.markdown(context)
 
     st.session_state.messages.append({"role": "assistant", "content": response})
