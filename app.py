@@ -67,8 +67,7 @@ if prompt := st.chat_input("Ask something about your data..."):
 
                     if chunks:
                         context = "\n\n".join([
-                            f"Source: {c.metadata.get('filename', '')}\n{c.page_content}"
-                            for c in chunks
+                            c.page_content for c in chunks
                         ])
                     else:
                         context = ""
@@ -78,18 +77,20 @@ if prompt := st.chat_input("Ask something about your data..."):
                     docs = retriever.invoke(prompt)
 
                     context = "\n\n".join([
-                        f"Source: {d.metadata.get('filename', '')}\n{d.page_content}"
-                        for d in docs
+                        d.page_content for d in docs
                     ])
 
                 # ---------- PROMPT ----------
                 full_prompt = f"""
 You are an intelligent assistant.
 
-Rules:
-- Use context if relevant
-- If context is insufficient, answer normally
-- Be clear and concise
+Answer the question using the context below.
+
+STRICT RULES:
+- Do NOT mention sources
+- Do NOT mention file names
+- Do NOT copy raw text
+- Give a clean, professional answer
 
 Context:
 {context}
@@ -111,10 +112,5 @@ Answer:
 
             # ---------- DISPLAY ----------
             st.markdown(response)
-
-            # ---------- SHOW SOURCES ----------
-            if context:
-                with st.expander("📄 Sources"):
-                    st.markdown(context)
 
     st.session_state.messages.append({"role": "assistant", "content": response})
