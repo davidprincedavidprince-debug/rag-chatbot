@@ -4,6 +4,7 @@ google-api-python-client
 google-auth
 langchain
 langchain-community
+langchain-huggingface
 langchain-text-splitters
 faiss-cpu
 sentence-transformers

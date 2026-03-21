@@ -5,19 +5,24 @@ import pandas as pd
 from langchain_community.document_loaders import TextLoader, PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
+try:
+    from langchain_huggingface import HuggingFaceEmbeddings
+except ImportError:
+    from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 
 # ---------- OPTIONAL IMPORTS (graceful fallback) ----------
+# OCR is disabled on Streamlit Cloud — too slow for free tier CPU.
+# To re-enable locally, change OCR_AVAILABLE to True below.
+OCR_AVAILABLE = False
+
 try:
-    import fitz  # PyMuPDF — for image-PDF OCR
+    import fitz
     import pytesseract
     from PIL import Image
     import io
-    OCR_AVAILABLE = True
 except ImportError:
-    OCR_AVAILABLE = False
-    print("⚠️  OCR unavailable. Install: pip install pymupdf pytesseract pillow")
+    pass
 
 try:
     from docx import Document as DocxDocument
