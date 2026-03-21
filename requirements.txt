@@ -1,5 +1,7 @@
 streamlit
 google-genai
+google-api-python-client
+google-auth
 langchain
 langchain-community
 langchain-text-splitters

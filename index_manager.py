@@ -182,6 +182,20 @@ def incremental_update(
 
     index_exists = os.path.exists(os.path.join(INDEX_PATH, "index.faiss"))
 
+    # ── Try Drive restore before full rebuild ─────────────────
+    if not index_exists and not force_rebuild:
+        print("No local index — checking Google Drive …")
+        try:
+            from drive_sync import download_index, drive_index_exists
+            if drive_index_exists():
+                print("Found index on Drive — downloading …")
+                if download_index():
+                    index_exists = os.path.exists(
+                        os.path.join(INDEX_PATH, "index.faiss")
+                    )
+        except Exception as e:
+            print(f"Drive restore skipped: {e}")
+
     # ── Full rebuild ──────────────────────────────────────────────────
     if force_rebuild or not index_exists:
         reason = "forced" if force_rebuild else "no existing index"
@@ -191,6 +205,11 @@ def incremental_update(
         vs     = FAISS.from_documents(chunks, embeddings)
         vs.save_local(INDEX_PATH)
         save_manifest(new_manifest)
+        try:
+            from drive_sync import upload_index
+            upload_index()
+        except Exception as e:
+            print(f"Drive upload skipped: {e}")
         stats["rebuild"] = True
         return vs, stats
 
