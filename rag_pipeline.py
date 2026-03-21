@@ -188,8 +188,8 @@ def _ingest_dataframe(
     filename: str,
     docs: list,
     sheet: str = "",
-    rows_per_chunk: int = 10,
-    max_chunks: int = 300,
+    rows_per_chunk: int = 50,
+    max_chunks: int = 150,
 ) -> None:
     """
     Batch rows into chunks instead of one Document per row.
@@ -275,7 +275,7 @@ def get_embeddings() -> HuggingFaceEmbeddings:
     especially on technical / domain-specific text.
     """
     return HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-mpnet-base-v2",
+        model_name="sentence-transformers/all-MiniLM-L6-v2",
         model_kwargs={"device": "cpu"},
         encode_kwargs={"normalize_embeddings": True},
     )
