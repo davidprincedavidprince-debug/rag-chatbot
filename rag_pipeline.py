@@ -183,25 +183,44 @@ def _ingest_dataframe(
     filename: str,
     docs: list,
     sheet: str = "",
+    rows_per_chunk: int = 10,
+    max_chunks: int = 300,
 ) -> None:
-    """Convert a DataFrame into one Document per row, plus a summary Document."""
+    """
+    Batch rows into chunks instead of one Document per row.
+    rows_per_chunk=10 means a 1,000-row sheet becomes ~100 chunks.
+    max_chunks=300 is a hard cap per sheet.
+    """
     df = df.dropna(how="all").fillna("")
+    if df.empty:
+        return
 
-    # Row-level documents
-    for _, row in df.iterrows():
-        text = " | ".join(f"{col}: {row[col]}" for col in df.columns if str(row[col]).strip())
-        if text.strip():
+    print(f"  Ingesting {filename}" + (f"[{sheet}]" if sheet else "") + f" — {len(df)} rows")
+
+    chunk_count = 0
+    for start in range(0, len(df), rows_per_chunk):
+        if chunk_count >= max_chunks:
+            print(f"  Reached max_chunks={max_chunks} for {filename} — truncating")
+            break
+        batch = df.iloc[start : start + rows_per_chunk]
+        lines = []
+        for _, row in batch.iterrows():
+            line = " | ".join(f"{col}: {row[col]}" for col in df.columns if str(row[col]).strip())
+            if line.strip():
+                lines.append(line)
+        if lines:
             docs.append(Document(
-                page_content=clean_text(text),
+                page_content=clean_text("\n".join(lines)),
                 metadata={
-                    "source": file_path,
+                    "source":   file_path,
                     "filename": filename,
-                    "sheet": sheet,
-                    "loader": "tabular",
+                    "sheet":    sheet,
+                    "rows":     f"{start+1}-{min(start+rows_per_chunk, len(df))}",
+                    "loader":   "tabular",
                 }
             ))
+            chunk_count += 1
 
-    # Summary document: column names + first few rows (helps with "what columns exist?" queries)
     preview_rows = df.head(5).to_string(index=False)
     summary = (
         f"File: {filename}"
@@ -213,10 +232,10 @@ def _ingest_dataframe(
     docs.append(Document(
         page_content=clean_text(summary),
         metadata={
-            "source": file_path,
+            "source":   file_path,
             "filename": filename,
-            "sheet": sheet,
-            "loader": "tabular-summary",
+            "sheet":    sheet,
+            "loader":   "tabular-summary",
         }
     ))
 
