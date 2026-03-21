@@ -1,116 +1,216 @@
-# app.py
-
 import streamlit as st
 from google import genai
+from google.genai import types
 
-from rag_pipeline import build_index, load_index, get_chunks_from_file
+from rag_pipeline import get_chunks_from_file
+from index_manager import incremental_update
 
 # ---------- PAGE CONFIG ----------
-st.set_page_config(page_title="Prince David's RAG Chatbot", layout="wide")
+st.set_page_config(
+    page_title="Prince David's RAG Chatbot",
+    page_icon="🧠",
+    layout="wide",
+)
 st.title("🧠 Prince David's RAG Chatbot")
 
 # ---------- GEMINI CLIENT ----------
 client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
 
+SYSTEM_INSTRUCTION = """You are an expert technical assistant with deep knowledge of
+engineering, reverse engineering, and document analysis.
+
+When answering:
+- Be thorough and precise — use exact technical terminology from the context
+- Structure your answer with clear headings or numbered steps when appropriate
+- If the context contains tables, formulas, or structured data, reflect that structure
+- If the context is insufficient to answer fully, say so clearly rather than guessing
+- Never fabricate information not present in the context
+- Keep answers focused on what was asked; avoid padding"""
+
 # ---------- CACHE VECTOR DB ----------
 @st.cache_resource
 def get_vectorstore():
-    return load_index()
+    vs, _ = incremental_update()
+    return vs
 
 vectorstore = get_vectorstore()
-retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
 
 # ---------- SIDEBAR ----------
-st.sidebar.title("⚙️ Settings")
+st.sidebar.title("⚙️  Settings")
+show_sources    = st.sidebar.toggle("📎 Show source chunks", value=False)
 
-if st.sidebar.button("🔄 Rebuild Index"):
-    with st.spinner("Rebuilding index..."):
-        vectorstore = build_index()
-    st.sidebar.success("Index rebuilt!")
+st.sidebar.subheader("📂 Filter by file")
+filename_filter = st.sidebar.text_input(
+    "Enter filename or partial path (optional)",
+    placeholder="e.g. transformation_output.xlsx",
+)
+
+st.sidebar.divider()
+st.sidebar.subheader("🗂️  Index management")
+
+if st.sidebar.button("🔄 Smart sync"):
+    with st.spinner("Checking for changes …"):
+        vs, stats = incremental_update()
     st.cache_resource.clear()
+
+    if stats.get("rebuild"):
+        st.sidebar.success(f"Full index built — {stats['total_files']} files indexed.")
+    elif not any([stats["added"], stats["modified"], stats["deleted"]]):
+        st.sidebar.info("Already up to date — no changes found.")
+    else:
+        parts = []
+        if stats["added"]:    parts.append(f"+{stats['added']} added")
+        if stats["modified"]: parts.append(f"~{stats['modified']} updated")
+        if stats["deleted"]:  parts.append(f"-{stats['deleted']} removed")
+        st.sidebar.success("Index updated: " + ", ".join(parts))
+    st.rerun()
+
+with st.sidebar.expander("Advanced"):
+    if st.button("🔨 Force full rebuild", type="secondary"):
+        with st.spinner("Rebuilding entire index from scratch …"):
+            vs, stats = incremental_update(force_rebuild=True)
+        st.cache_resource.clear()
+        st.sidebar.success(f"Rebuilt — {stats['total_files']} files.")
+        st.rerun()
+
+st.sidebar.divider()
+if st.sidebar.button("🗑️  Clear chat"):
+    st.session_state.messages = []
+    st.rerun()
 
 # ---------- CHAT STATE ----------
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# ---------- DISPLAY CHAT ----------
+# ---------- DISPLAY HISTORY ----------
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
+        if msg.get("sources") and show_sources:
+            with st.expander("📎 Source chunks used"):
+                for i, src in enumerate(msg["sources"], 1):
+                    st.caption(f"**Chunk {i}** — `{src['meta']}`")
+                    st.text(src["text"][:400] + ("…" if len(src["text"]) > 400 else ""))
 
-# ---------- FILE FILTER ----------
-st.sidebar.subheader("📂 Filter by file")
-filename_filter = st.sidebar.text_input(
-    "Enter file name or path (optional)"
-)
+# ---------- HELPERS ----------
+
+def get_adaptive_k(question: str) -> int:
+    words = len(question.split())
+    if words <= 8:    return 3
+    elif words <= 20: return 5
+    else:             return 8
+
+def trim_chunks(chunks, max_chars: int = 600):
+    for c in chunks:
+        c.page_content = c.page_content[:max_chars]
+    return chunks
+
+def compress_history(messages: list, keep_recent: int = 4) -> str:
+    if len(messages) <= keep_recent:
+        return "\n".join(
+            f"{m['role'].capitalize()}: {m['content']}" for m in messages
+        )
+    old    = messages[:-keep_recent]
+    recent = messages[-keep_recent:]
+    summary = (
+        f"[Earlier: {len(old)//2} exchanges about "
+        + ", ".join(m["content"][:40] for m in old[::2][:2])
+        + "...]"
+    )
+    return summary + "\n" + "\n".join(
+        f"{m['role'].capitalize()}: {m['content']}" for m in recent
+    )
 
 # ---------- USER INPUT ----------
-if prompt := st.chat_input("Ask something about your data..."):
+if prompt := st.chat_input("Ask something about your documents …"):
 
     st.session_state.messages.append({"role": "user", "content": prompt})
-
     with st.chat_message("user"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-
+        with st.spinner("Retrieving context …"):
+            k = get_adaptive_k(prompt)
             try:
-                # ---------- FILE FILTER MODE ----------
                 if filename_filter.strip():
                     chunks = get_chunks_from_file(
-                        vectorstore,
-                        prompt,
-                        filename_filter.strip(),
-                        k=3
+                        vectorstore, prompt, filename_filter.strip(), k=k
                     )
-
-                    if chunks:
-                        context = "\n\n".join([
-                            c.page_content for c in chunks
-                        ])
-                    else:
-                        context = ""
-
-                # ---------- NORMAL RAG ----------
+                    if not chunks:
+                        st.warning(
+                            f"No chunks found for **{filename_filter}** — "
+                            "falling back to full index."
+                        )
+                        chunks = vectorstore.as_retriever(
+                            search_kwargs={"k": k}
+                        ).invoke(prompt)
                 else:
-                    docs = retriever.invoke(prompt)
+                    chunks = vectorstore.as_retriever(
+                        search_kwargs={"k": k}
+                    ).invoke(prompt)
 
-                    context = "\n\n".join([
-                        d.page_content for d in docs
-                    ])
-
-                # ---------- PROMPT ----------
-                full_prompt = f"""
-You are an intelligent assistant.
-
-Answer the question using the context below.
-
-STRICT RULES:
-- Do NOT mention sources
-- Do NOT mention file names
-- Do NOT copy raw text
-- Give a clean, professional answer
-
-Context:
-{context}
-
-Question:
-{prompt}
-
-Answer:
-"""
-
-                # ---------- GEMINI CALL ----------
-                response = client.models.generate_content(
-                    model="models/gemini-2.5-flash",
-                    contents=full_prompt
-                ).text
+                chunks = trim_chunks(chunks)
 
             except Exception as e:
-                response = f"⚠️ Error: {str(e)}"
+                st.error(f"Retrieval error: {e}")
+                chunks = []
 
-            # ---------- DISPLAY ----------
-            st.markdown(response)
+            context_parts, source_meta = [], []
+            for i, chunk in enumerate(chunks, 1):
+                meta  = chunk.metadata
+                label = meta.get("filename", meta.get("source", "unknown"))
+                if meta.get("page"):  label += f" (p.{meta['page']})"
+                if meta.get("sheet"): label += f" [{meta['sheet']}]"
+                context_parts.append(f"[Chunk {i} — {label}]\n{chunk.page_content}")
+                source_meta.append({"meta": label, "text": chunk.page_content})
 
-    st.session_state.messages.append({"role": "assistant", "content": response})
+            context      = "\n\n---\n\n".join(context_parts) or "No relevant context found."
+            history_text = compress_history(st.session_state.messages[:-1], keep_recent=4)
+
+            full_prompt = f"""CONTEXT FROM DOCUMENTS:
+{context}
+
+{"CONVERSATION SO FAR:" + chr(10) + history_text + chr(10) if history_text else ""}CURRENT QUESTION:
+{prompt}
+
+Answer the question thoroughly using the context. Use technical language where appropriate.
+If the context spans multiple sources, synthesise them into one coherent answer.
+"""
+
+        response_text = ""
+        placeholder   = st.empty()
+
+        try:
+            stream = client.models.generate_content_stream(
+                model="models/gemini-2.5-flash",
+                contents=full_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_INSTRUCTION,
+                    temperature=0.2,
+                    max_output_tokens=2048,
+                ),
+            )
+            for chunk_resp in stream:
+                if chunk_resp.text:
+                    response_text += chunk_resp.text
+                    placeholder.markdown(response_text + "▌")
+            placeholder.markdown(response_text)
+
+        except Exception as e:
+            response_text = (
+                "Sorry, I encountered an error. Please try again."
+            )
+            placeholder.error(response_text)
+            print(f"Gemini error: {e}")
+
+        if source_meta and show_sources:
+            with st.expander("📎 Source chunks used"):
+                for i, src in enumerate(source_meta, 1):
+                    st.caption(f"**Chunk {i}** — `{src['meta']}`")
+                    st.text(src["text"][:400] + ("…" if len(src["text"]) > 400 else ""))
+
+    st.session_state.messages.append({
+        "role":    "assistant",
+        "content": response_text,
+        "sources": source_meta,
+    })
