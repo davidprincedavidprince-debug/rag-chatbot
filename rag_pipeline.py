@@ -280,13 +280,14 @@ def split_documents(docs: list[Document]) -> list[Document]:
 # ---------- EMBEDDINGS ----------
 
 def get_embeddings() -> HuggingFaceEmbeddings:
-    """
-    all-mpnet-base-v2 produces much richer semantic embeddings than MiniLM,
-    especially on technical / domain-specific text.
-    """
+    import os
+    token = os.environ.get("HF_TOKEN", "") or os.environ.get("HUGGINGFACEHUB_API_TOKEN", "")
+    model_kwargs = {"device": "cpu"}
+    if token:
+        model_kwargs["token"] = token
     return HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2",
-        model_kwargs={"device": "cpu"},
+        model_name="all-MiniLM-L6-v2",
+        model_kwargs=model_kwargs,
         encode_kwargs={"normalize_embeddings": True},
     )
 
