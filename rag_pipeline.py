@@ -270,10 +270,17 @@ def split_documents(docs: list[Document]) -> list[Document]:
 # ---------- EMBEDDINGS ----------
 
 def get_embeddings() -> HuggingFaceEmbeddings:
-    """
-    all-mpnet-base-v2 produces much richer semantic embeddings than MiniLM,
-    especially on technical / domain-specific text.
-    """
+    import os
+    # Set HF token so sentence-transformers can download the model
+    try:
+        import streamlit as st
+        token = st.secrets.get("HF_TOKEN", "")
+        if token:
+            os.environ["HF_TOKEN"] = token
+            os.environ["HUGGINGFACEHUB_API_TOKEN"] = token
+    except Exception:
+        pass
+
     return HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2",
         model_kwargs={"device": "cpu"},
