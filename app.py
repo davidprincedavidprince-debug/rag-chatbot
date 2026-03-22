@@ -2,6 +2,8 @@ import streamlit as st
 from google import genai
 from google.genai import types
 import os
+import glob
+import pandas as pd
 
 from rag_pipeline import get_chunks_from_file
 from index_manager import incremental_update
@@ -28,6 +30,132 @@ When answering:
 - Never fabricate information not present in the context
 - Keep answers focused on what was asked; avoid padding"""
 
+# ==========================================================================
+# PANDAS AGENT — Excel / CSV handler
+# ==========================================================================
+
+@st.cache_resource
+def load_excel_dataframes() -> dict:
+    """
+    Load all Excel and CSV files from data/ into DataFrames.
+    Returns: { "filename.xlsx": { "SheetName": DataFrame, ... }, ... }
+    """
+    dfs = {}
+    for pattern in ["data/**/*.xlsx", "data/**/*.xls", "data/**/*.csv"]:
+        for path in glob.glob(pattern, recursive=True):
+            try:
+                fname = os.path.basename(path)
+                if path.endswith(".csv"):
+                    dfs[fname] = {"Sheet1": pd.read_csv(path)}
+                else:
+                    xl = pd.ExcelFile(path)
+                    dfs[fname] = {sheet: xl.parse(sheet) for sheet in xl.sheet_names}
+                print(f"✅  Loaded {fname} for Pandas Agent")
+            except Exception as e:
+                print(f"⚠️  Could not load {path}: {e}")
+    return dfs
+
+
+def query_excel_with_gemini(question: str, dfs: dict) -> str | None:
+    """
+    Two-step Pandas Agent:
+      Step 1 — Gemini writes a pandas expression from the schema
+      Step 2 — Python executes it, Gemini formats the result
+
+    Returns answer string, or None if question is not about tabular data.
+    """
+    if not dfs:
+        return None
+
+    # ── Build schema so Gemini knows what columns/data exist ──────────
+    schema_parts = []
+    for fname, sheets in dfs.items():
+        for sheet_name, df in sheets.items():
+            sample = df.head(3).to_string(index=False)
+            schema_parts.append(
+                f"File: {fname} | Sheet: {sheet_name}\n"
+                f"Columns: {', '.join(str(c) for c in df.columns)}\n"
+                f"Row count: {len(df)}\n"
+                f"Sample (first 3 rows):\n{sample}"
+            )
+    schema_text = "\n\n---\n\n".join(schema_parts)
+
+    # ── Step 1: Gemini writes the pandas expression ────────────────────
+    planning_prompt = f"""You have access to these Excel/CSV files as pandas DataFrames:
+
+{schema_text}
+
+DataFrames are in a dict called `dfs`:
+  dfs['filename.xlsx']['SheetName'] -> DataFrame
+
+User question: {question}
+
+Task:
+1. If this question is about the tabular data — write ONE pandas expression that answers it.
+   - Use only: dfs, pd, standard Python
+   - Must be executable with eval() — no imports, no print(), no multi-line
+   - Example: dfs['scores.xlsx']['L4_Tool'][dfs['scores.xlsx']['L4_Tool']['project_code']=='P001']['Relevance_overall'].values[0]
+2. If NOT about tabular data — respond with exactly: NOT_TABULAR
+
+Respond with ONLY the pandas expression or NOT_TABULAR."""
+
+    try:
+        plan_resp = client.models.generate_content(
+            model="models/gemini-2.5-flash",
+            contents=planning_prompt,
+            config=types.GenerateContentConfig(temperature=0, max_output_tokens=512),
+        )
+        pandas_expr = plan_resp.text.strip().strip("`").strip()
+
+        # Strip markdown code fences if Gemini wrapped the expression
+        if pandas_expr.startswith("python"):
+            pandas_expr = pandas_expr[6:].strip()
+
+        if "NOT_TABULAR" in pandas_expr:
+            return None
+
+        # ── Step 2: Execute the expression ────────────────────────────
+        try:
+            result = eval(pandas_expr, {"dfs": dfs, "pd": pd})
+        except Exception as exec_err:
+            print(f"Pandas exec error: {exec_err} | expr: {pandas_expr}")
+            return None
+
+        # Convert result to a readable string
+        if isinstance(result, pd.DataFrame):
+            result_str = result.to_string(index=False)
+        elif isinstance(result, pd.Series):
+            result_str = result.to_string()
+        else:
+            result_str = str(result)
+
+        # ── Step 3: Gemini formats a clean human answer ────────────────
+        answer_prompt = f"""The user asked: "{question}"
+
+Pandas query returned this exact data:
+{result_str}
+
+Write a clear, accurate answer:
+- Use exact numbers — do not round or approximate
+- Format tables neatly in markdown if the result is tabular
+- Be concise but complete"""
+
+        answer_resp = client.models.generate_content(
+            model="models/gemini-2.5-flash",
+            contents=answer_prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_INSTRUCTION,
+                temperature=0.1,
+                max_output_tokens=1024,
+            ),
+        )
+        return answer_resp.text
+
+    except Exception as e:
+        print(f"Pandas agent error: {e}")
+        return None  # Fall back to RAG silently
+
+
 # ---------- CACHE VECTOR DB ----------
 @st.cache_resource
 def get_vectorstore():
@@ -38,7 +166,13 @@ def get_vectorstore():
 with st.spinner("Loading knowledge base... (first load may take a few minutes)"):
     try:
         vectorstore = get_vectorstore()
-        st.success("Knowledge base ready!", icon="✅")
+        excel_data  = load_excel_dataframes()
+        n_sheets    = sum(len(sheets) for sheets in excel_data.values())
+        st.success(
+            f"Knowledge base ready!"
+            + (f" ({n_sheets} Excel sheet(s) loaded)" if n_sheets else ""),
+            icon="✅"
+        )
     except Exception as e:
         st.error(f"Failed to load index: {e}")
         st.info("Please click 'Force full rebuild' in the sidebar Advanced section.")
@@ -51,7 +185,7 @@ show_sources    = st.sidebar.toggle("📎 Show source chunks", value=False)
 st.sidebar.subheader("📂 Filter by file")
 filename_filter = st.sidebar.text_input(
     "Enter filename or partial path (optional)",
-    placeholder="e.g. report.pdf",
+    placeholder="e.g. transformation_output.xlsx",
 )
 
 st.sidebar.divider()
@@ -86,6 +220,14 @@ st.sidebar.divider()
 if st.sidebar.button("🗑️  Clear chat"):
     st.session_state.messages = []
     st.rerun()
+
+# Show loaded Excel files in sidebar
+if excel_data:
+    st.sidebar.divider()
+    st.sidebar.subheader("📊 Loaded Excel files")
+    for fname, sheets in excel_data.items():
+        for sheet_name, df in sheets.items():
+            st.sidebar.caption(f"📄 {fname} › {sheet_name} ({len(df)} rows)")
 
 # ---------- CHAT STATE ----------
 if "messages" not in st.session_state:
@@ -131,7 +273,7 @@ def compress_history(messages: list, keep_recent: int = 4) -> str:
     )
 
 # ---------- USER INPUT ----------
-if prompt := st.chat_input("Ask something about your documents …"):
+if prompt := st.chat_input("Ask about your documents or Excel data …"):
 
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -141,45 +283,58 @@ if prompt := st.chat_input("Ask something about your documents …"):
         response_text = ""
         placeholder   = st.empty()
         source_meta   = []
-        with st.spinner("Retrieving context …"):
-            k = get_adaptive_k(prompt)
-            try:
-                if filename_filter.strip():
-                    chunks = get_chunks_from_file(
-                        vectorstore, prompt, filename_filter.strip(), k=k
-                    )
-                    if not chunks:
-                        st.warning(
-                            f"No chunks found for **{filename_filter}** — "
-                            "falling back to full index."
+        answered_by   = "rag"
+
+        # ── Route 1: Pandas Agent for Excel/numerical questions ────────
+        with st.spinner("Thinking …"):
+            excel_answer = query_excel_with_gemini(prompt, excel_data)
+
+        if excel_answer:
+            answered_by   = "excel"
+            response_text = excel_answer
+            placeholder.markdown(response_text)
+
+        else:
+            # ── Route 2: RAG for document questions ───────────────────
+            with st.spinner("Retrieving context …"):
+                k = get_adaptive_k(prompt)
+                try:
+                    if filename_filter.strip():
+                        chunks = get_chunks_from_file(
+                            vectorstore, prompt, filename_filter.strip(), k=k
                         )
+                        if not chunks:
+                            st.warning(
+                                f"No chunks found for **{filename_filter}** — "
+                                "falling back to full index."
+                            )
+                            chunks = vectorstore.as_retriever(
+                                search_kwargs={"k": k}
+                            ).invoke(prompt)
+                    else:
                         chunks = vectorstore.as_retriever(
                             search_kwargs={"k": k}
                         ).invoke(prompt)
-                else:
-                    chunks = vectorstore.as_retriever(
-                        search_kwargs={"k": k}
-                    ).invoke(prompt)
 
-                chunks = trim_chunks(chunks)
+                    chunks = trim_chunks(chunks)
 
-            except Exception as e:
-                st.error(f"Retrieval error: {e}")
-                chunks = []
+                except Exception as e:
+                    st.error(f"Retrieval error: {e}")
+                    chunks = []
 
-            context_parts =[] 
-            for i, chunk in enumerate(chunks, 1):
-                meta  = chunk.metadata
-                label = meta.get("filename", meta.get("source", "unknown"))
-                if meta.get("page"):  label += f" (p.{meta['page']})"
-                
-                context_parts.append(f"[Chunk {i} — {label}]\n{chunk.page_content}")
-                source_meta.append({"meta": label, "text": chunk.page_content})
+                context_parts = []
+                for i, chunk in enumerate(chunks, 1):
+                    meta  = chunk.metadata
+                    label = meta.get("filename", meta.get("source", "unknown"))
+                    if meta.get("page"):  label += f" (p.{meta['page']})"
+                    if meta.get("sheet"): label += f" [{meta['sheet']}]"
+                    context_parts.append(f"[Chunk {i} — {label}]\n{chunk.page_content}")
+                    source_meta.append({"meta": label, "text": chunk.page_content})
 
-            context      = "\n\n---\n\n".join(context_parts) or "No relevant context found."
-            history_text = compress_history(st.session_state.messages[:-1], keep_recent=4)
+                context      = "\n\n---\n\n".join(context_parts) or "No relevant context found."
+                history_text = compress_history(st.session_state.messages[:-1], keep_recent=4)
 
-            full_prompt = f"""CONTEXT FROM DOCUMENTS:
+                full_prompt = f"""CONTEXT FROM DOCUMENTS:
 {context}
 
 {"CONVERSATION SO FAR:" + chr(10) + history_text + chr(10) if history_text else ""}CURRENT QUESTION:
@@ -189,30 +344,31 @@ Answer the question thoroughly using the context. Use technical language where a
 If the context spans multiple sources, synthesise them into one coherent answer.
 """
 
-        try:
-            stream = client.models.generate_content_stream(
-                model="models/gemini-2.5-flash",
-                contents=full_prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_INSTRUCTION,
-                    temperature=0.2,
-                    max_output_tokens=2048,
-                ),
-            )
-            for chunk_resp in stream:
-                if chunk_resp.text:
-                    response_text += chunk_resp.text
-                    placeholder.markdown(response_text + "▌")
-            placeholder.markdown(response_text)
+            try:
+                stream = client.models.generate_content_stream(
+                    model="models/gemini-2.5-flash",
+                    contents=full_prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_INSTRUCTION,
+                        temperature=0.2,
+                        max_output_tokens=2048,
+                    ),
+                )
+                for chunk_resp in stream:
+                    if chunk_resp.text:
+                        response_text += chunk_resp.text
+                        placeholder.markdown(response_text + "▌")
+                placeholder.markdown(response_text)
 
-        except Exception as e:
-            response_text = (
-                "Sorry, I encountered an error. Please try again."
-            )
-            placeholder.error(response_text)
-            print(f"Gemini error: {e}")
+            except Exception as e:
+                response_text = "Sorry, I encountered an error. Please try again."
+                placeholder.error(response_text)
+                print(f"Gemini error: {e}")
 
-        if source_meta and show_sources:
+        # ── Source label ───────────────────────────────────────────────
+        if answered_by == "excel":
+            st.caption("📊 Answered from Excel data (Pandas Agent)")
+        elif source_meta and show_sources:
             with st.expander("📎 Source chunks used"):
                 for i, src in enumerate(source_meta, 1):
                     st.caption(f"**Chunk {i}** — `{src['meta']}`")
