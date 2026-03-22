@@ -3,12 +3,16 @@ google-genai
 huggingface_hub==0.23.4
 sentence-transformers==2.6.1
 transformers==4.41.2
-faiss-cpu
 langchain==0.2.14
 langchain-community==0.2.12
 langchain-core==0.2.43
+langchain-text-splitters==0.2.2
+faiss-cpu
+numpy==1.26.4
 pandas
 openpyxl
 pypdf
 python-docx
+pymupdf
+pytesseract
 pillow
