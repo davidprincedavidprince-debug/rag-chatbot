@@ -22,7 +22,7 @@ def _get_token() -> str:
         import streamlit as st
         return st.secrets["HF_TOKEN"]
     except Exception:
-        token = os.environ.get("HF_TOKEN", "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")
+        token = os.environ.get("HF_TOKEN", "")
         return token
 
 
