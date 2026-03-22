@@ -15,7 +15,11 @@ except Exception:
 from langchain_community.document_loaders import TextLoader, PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
+# HuggingFaceEmbeddings moved to langchain-huggingface in langchain v0.3
+try:
+    from langchain_huggingface import HuggingFaceEmbeddings
+except ImportError:
+    from langchain_community.embeddings import HuggingFaceEmbeddings  # type: ignore
 from langchain_core.documents import Document
 
 # ---------- OPTIONAL IMPORTS (graceful fallback) ----------
@@ -277,18 +281,18 @@ def split_documents(docs: list[Document]) -> list[Document]:
 # ---------- EMBEDDINGS ----------
 
 def get_embeddings() -> HuggingFaceEmbeddings:
-    import os
-    import numpy as np
+    
 
     token = os.environ.get("HF_TOKEN", "") or os.environ.get("HUGGINGFACEHUB_API_TOKEN", "")
     model_kwargs = {"device": "cpu"}
+    
     if token:
         model_kwargs["token"] = token
 
     embeddings = HuggingFaceEmbeddings(
         model_name="all-MiniLM-L6-v2",
         model_kwargs=model_kwargs,
-        encode_kwargs={"normalize_embeddings": True},
+        encode_kwargs = {"normalize_embeddings": True}
     )
 
     # Validate embeddings are real — not a dummy fallback

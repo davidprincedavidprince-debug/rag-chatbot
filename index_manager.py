@@ -27,14 +27,18 @@ import os
 import json
 import hashlib
 import glob
+import pandas as pd
 
 from langchain_community.vectorstores import FAISS
+from langchain_community.document_loaders import TextLoader, PyPDFLoader
+from langchain_core.documents import Document
 from rag_pipeline import (
     load_documents,
     split_documents,
     get_embeddings,
     clean_text,
     _ingest_dataframe,
+    ocr_pdf,
     OCR_AVAILABLE,
     DOCX_AVAILABLE,
 )
@@ -89,9 +93,7 @@ def compute_diff(old: dict, new: dict) -> tuple:
 
 def _load_single(file_path: str) -> list:
     """Parse one file using the same loaders as load_documents()."""
-    import pandas as pd
-    from langchain_community.document_loaders import TextLoader, PyPDFLoader
-    from langchain_core.documents import Document
+    
 
     docs = []
     file = os.path.basename(file_path)
@@ -125,7 +127,7 @@ def _load_single(file_path: str) -> list:
                 ])
 
         elif file.endswith(".docx") and DOCX_AVAILABLE:
-            from docx import Document as DocxDoc
+            from docx import Document as DocxDoc  # kept lazy — optional dependency
             wd        = DocxDoc(file_path)
             full_text = "\n".join(p.text for p in wd.paragraphs if p.text.strip())
             for table in wd.tables:

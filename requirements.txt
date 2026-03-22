@@ -1,17 +1,33 @@
-streamlit==1.55.0
-google-genai
-huggingface_hub==0.23.4
-sentence-transformers==2.6.1
-transformers==4.41.2
-faiss-cpu
-langchain==0.2.14
-langchain-community==0.2.12
-langchain-core==0.2.43
-langchain-text-splitters==0.2.2
-pandas
-openpyxl
-pypdf
-python-docx
-pymupdf
-pytesseract
-pillow
+# Compatible with Python 3.11.4 (local) and Python 3.14 (Streamlit Cloud)
+# All packages below have pre-built wheels for both versions — no Rust compilation needed.
+
+# ── Core app ──────────────────────────────────────────────────────────
+streamlit>=1.40.0,<2.0.0
+google-genai>=1.0.0
+
+# ── HuggingFace stack ─────────────────────────────────────────────────
+# tokenizers>=0.21 ships pre-built wheels for py3.11 AND py3.14
+# (0.19.x required Rust compilation and only supported up to py3.12)
+huggingface_hub>=0.24.0,<1.0.0
+tokenizers>=0.21.0
+transformers>=4.45.0,<5.0.0
+sentence-transformers>=3.0.0,<4.0.0
+
+# ── Vector store ──────────────────────────────────────────────────────
+faiss-cpu>=1.8.0
+
+# ── LangChain ─────────────────────────────────────────────────────────
+langchain>=0.3.0,<0.4.0
+langchain-community>=0.3.0,<0.4.0
+langchain-core>=0.3.0,<0.4.0
+langchain-text-splitters>=0.3.0,<0.4.0
+langchain-huggingface>=0.1.0,<0.2.0
+
+# ── Data handling ─────────────────────────────────────────────────────
+pandas>=2.1.0,<3.0.0
+openpyxl>=3.1.0
+pypdf>=4.0.0
+python-docx>=1.1.0
+pymupdf>=1.24.0
+pytesseract>=0.3.10
+pillow>=10.0.0,<12.0.0
