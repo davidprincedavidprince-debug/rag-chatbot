@@ -15,12 +15,13 @@ except Exception:
 from langchain_community.document_loaders import TextLoader, PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
 # HuggingFaceEmbeddings moved to langchain-huggingface in langchain v0.3
 try:
     from langchain_huggingface import HuggingFaceEmbeddings
 except ImportError:
     from langchain_community.embeddings import HuggingFaceEmbeddings  # type: ignore
-from langchain_core.documents import Document
+
 
 # ---------- OPTIONAL IMPORTS (graceful fallback) ----------
 # OCR is disabled on Streamlit Cloud — too slow for free tier CPU.
@@ -283,11 +284,11 @@ def split_documents(docs: list[Document]) -> list[Document]:
 def get_embeddings() -> HuggingFaceEmbeddings:
     
 
-    token = os.environ.get("HF_TOKEN", "") or os.environ.get("HUGGINGFACEHUB_API_TOKEN", "")
+    #token = os.environ.get("HF_TOKEN", "") or os.environ.get("HUGGINGFACEHUB_API_TOKEN", "")
     model_kwargs = {"device": "cpu"}
     
-    if token:
-        model_kwargs["token"] = token
+    # if token:
+        # model_kwargs["token"] = token
 
     embeddings = HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2",
