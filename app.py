@@ -51,7 +51,7 @@ show_sources    = st.sidebar.toggle("📎 Show source chunks", value=False)
 st.sidebar.subheader("📂 Filter by file")
 filename_filter = st.sidebar.text_input(
     "Enter filename or partial path (optional)",
-    placeholder="e.g. transformation_output.xlsx",
+    placeholder="e.g. report.pdf",
 )
 
 st.sidebar.divider()
@@ -138,6 +138,9 @@ if prompt := st.chat_input("Ask something about your documents …"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
+        response_text = ""
+        placeholder   = st.empty()
+        source_meta   = []
         with st.spinner("Retrieving context …"):
             k = get_adaptive_k(prompt)
             try:
@@ -164,12 +167,12 @@ if prompt := st.chat_input("Ask something about your documents …"):
                 st.error(f"Retrieval error: {e}")
                 chunks = []
 
-            context_parts, source_meta = [], []
+            context_parts =[] 
             for i, chunk in enumerate(chunks, 1):
                 meta  = chunk.metadata
                 label = meta.get("filename", meta.get("source", "unknown"))
                 if meta.get("page"):  label += f" (p.{meta['page']})"
-                if meta.get("sheet"): label += f" [{meta['sheet']}]"
+                
                 context_parts.append(f"[Chunk {i} — {label}]\n{chunk.page_content}")
                 source_meta.append({"meta": label, "text": chunk.page_content})
 
@@ -185,9 +188,6 @@ if prompt := st.chat_input("Ask something about your documents …"):
 Answer the question thoroughly using the context. Use technical language where appropriate.
 If the context spans multiple sources, synthesise them into one coherent answer.
 """
-
-        response_text = ""
-        placeholder   = st.empty()
 
         try:
             stream = client.models.generate_content_stream(

@@ -37,7 +37,6 @@ from rag_pipeline import (
     split_documents,
     get_embeddings,
     clean_text,
-    _ingest_dataframe,
     ocr_pdf,
     OCR_AVAILABLE,
     DOCX_AVAILABLE,
@@ -141,13 +140,8 @@ def _load_single(file_path: str) -> list:
                     metadata={"source": file_path, "filename": file, "loader": "docx"},
                 ))
 
-        elif file.endswith(".csv"):
-            _ingest_dataframe(pd.read_csv(file_path), file_path, file, docs)
-
-        elif file.endswith((".xlsx", ".xls")):
-            xl = pd.ExcelFile(file_path)
-            for sheet in xl.sheet_names:
-                _ingest_dataframe(xl.parse(sheet), file_path, file, docs, sheet=sheet)
+        elif file.endswith((".xlsx", ".xls", ".csv")):
+            print(f"  ⏭  Skipping tabular file: {file}")
 
     except Exception as e:
         print(f"  ⚠️  Could not load {file_path}: {e}")
@@ -244,13 +238,15 @@ def incremental_update(
     # ── Remove stale chunks ───────────────────────────────────────────
     stale = set(modified + deleted)
     if stale:
-        all_ids  = list(vs.docstore._dict.keys())
-        keep_ids = [
-            i for i in all_ids
-            if vs.docstore._dict[i].metadata.get("source", "") not in stale
-        ]
-        if keep_ids:
-            kept_docs = [vs.docstore._dict[i] for i in keep_ids]
+        # Use public API: index_to_docstore_id maps FAISS int IDs → doc string IDs
+        all_doc_ids = list(vs.index_to_docstore_id.values())
+        kept_docs = []
+        for doc_id in all_doc_ids:
+            doc = vs.docstore.search(doc_id)
+            if doc is not None and doc.metadata.get("source", "") not in stale:
+                kept_docs.append(doc)
+
+        if kept_docs:
             vs = FAISS.from_documents(kept_docs, embeddings)
         else:
             vs = None
@@ -272,7 +268,7 @@ def incremental_update(
 
     # ── Edge case: all files deleted ──────────────────────────────────
     if vs is None:
-        from langchain_core.documents import Document
+        
         vs = FAISS.from_documents(
             [Document(page_content="empty index", metadata={"source": "__placeholder__"})],
             embeddings,

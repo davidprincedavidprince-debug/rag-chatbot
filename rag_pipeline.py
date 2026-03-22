@@ -1,6 +1,5 @@
 import os
 import glob
-import pandas as pd
 
 # ── Set HF token before any HuggingFace imports ───────────────────────
 try:
@@ -25,7 +24,6 @@ except ImportError:
 
 # ---------- OPTIONAL IMPORTS (graceful fallback) ----------
 # OCR is disabled on Streamlit Cloud — too slow for free tier CPU.
-# To re-enable locally, change OCR_AVAILABLE to True below.
 OCR_AVAILABLE = False
 
 try:
@@ -49,7 +47,6 @@ except ImportError:
 def clean_text(text: str) -> str:
     """Normalise whitespace while preserving paragraph breaks."""
     lines = [line.strip() for line in str(text).splitlines()]
-    # collapse runs of blank lines to a single blank line
     cleaned, prev_blank = [], False
     for line in lines:
         if line == "":
@@ -67,37 +64,35 @@ def clean_text(text: str) -> str:
 def ocr_pdf(file_path: str) -> list[Document]:
     """
     Rasterise every page of a PDF and run Tesseract OCR on it.
-    Used when PyPDFLoader extracts fewer than 50 characters per page on average.
+    Used when PyPDFLoader extracts fewer than 50 characters per page.
     """
     if not OCR_AVAILABLE:
         return []
 
     docs = []
-    pdf = fitz.open(file_path)
-
+    pdf  = fitz.open(file_path)
     for page_num, page in enumerate(pdf):
-        pix = page.get_pixmap(dpi=300)
-        img = Image.open(io.BytesIO(pix.tobytes("png")))
+        pix  = page.get_pixmap(dpi=300)
+        img  = Image.open(io.BytesIO(pix.tobytes("png")))
         text = pytesseract.image_to_string(img)
-
         if text.strip():
             docs.append(Document(
                 page_content=clean_text(text),
                 metadata={
-                    "source": file_path,
+                    "source":   file_path,
                     "filename": os.path.basename(file_path),
-                    "page": page_num + 1,
-                    "loader": "ocr",
+                    "page":     page_num + 1,
+                    "loader":   "ocr",
                 }
             ))
-
     pdf.close()
     return docs
 
 
-# ---------- LOAD DOCUMENTS WITH METADATA ----------
+# ---------- LOAD DOCUMENTS ----------
 
 def load_documents(data_path: str = "data") -> list[Document]:
+    """Load PDF, TXT, MD and DOCX files from data_path. Skips Excel/CSV."""
     docs = []
 
     for file_path in glob.glob(f"{data_path}/**/*", recursive=True):
@@ -105,47 +100,45 @@ def load_documents(data_path: str = "data") -> list[Document]:
             continue
 
         file = os.path.basename(file_path)
-        loader_tag = "text"
+
+        # Skip Excel and CSV files — not processed
+        if file.endswith((".xlsx", ".xls", ".csv")):
+            print(f"  ⏭  Skipping tabular file: {file}")
+            continue
 
         try:
-
             # ── TXT / MARKDOWN ──────────────────────────────────────
             if file.endswith((".txt", ".md")):
                 loaded = TextLoader(file_path, encoding="utf-8").load()
                 for d in loaded:
                     docs.append(Document(
                         page_content=clean_text(d.page_content),
-                        metadata={"source": file_path, "filename": file, "loader": loader_tag}
+                        metadata={"source": file_path, "filename": file, "loader": "text"}
                     ))
 
             # ── PDF ─────────────────────────────────────────────────
             elif file.endswith(".pdf"):
-                loaded = PyPDFLoader(file_path).load()
-
-                # Check whether the PDF actually has selectable text
+                loaded     = PyPDFLoader(file_path).load()
                 total_chars = sum(len(d.page_content) for d in loaded)
                 avg_chars   = total_chars / max(len(loaded), 1)
 
                 if avg_chars >= 50:
-                    # Normal text-layer PDF
                     for d in loaded:
                         docs.append(Document(
                             page_content=clean_text(d.page_content),
                             metadata={
-                                "source": file_path,
+                                "source":   file_path,
                                 "filename": file,
-                                "page": d.metadata.get("page", "?"),
-                                "loader": "pypdf",
+                                "page":     d.metadata.get("page", "?"),
+                                "loader":   "pypdf",
                             }
                         ))
                 else:
-                    # Image-heavy / scanned PDF → OCR
                     print(f"  ↳ Low text yield in {file} — switching to OCR")
                     ocr_docs = ocr_pdf(file_path)
                     if ocr_docs:
                         docs.extend(ocr_docs)
                     else:
-                        # Last resort: keep whatever PyPDF extracted
                         for d in loaded:
                             docs.append(Document(
                                 page_content=clean_text(d.page_content),
@@ -158,8 +151,6 @@ def load_documents(data_path: str = "data") -> list[Document]:
                 full_text = "\n".join(
                     para.text for para in word_doc.paragraphs if para.text.strip()
                 )
-
-                # Also extract text from tables
                 for table in word_doc.tables:
                     for row in table.rows:
                         row_text = " | ".join(
@@ -174,95 +165,19 @@ def load_documents(data_path: str = "data") -> list[Document]:
                         metadata={"source": file_path, "filename": file, "loader": "docx"}
                     ))
 
-            # ── CSV ─────────────────────────────────────────────────
-            elif file.endswith(".csv"):
-                df = pd.read_csv(file_path)
-                _ingest_dataframe(df, file_path, file, docs)
-
-            # ── EXCEL (all sheets) ───────────────────────────────────
-            elif file.endswith((".xlsx", ".xls")):
-                xl = pd.ExcelFile(file_path)
-
-                for sheet_name in xl.sheet_names:
-                    df = xl.parse(sheet_name)
-                    _ingest_dataframe(df, file_path, file, docs, sheet=sheet_name)
-
         except Exception as e:
             print(f"⚠️  Error loading {file_path}: {e}")
 
-    print(f"✅  Loaded {len(docs)} raw document sections from {data_path}/")
+    print(f"✅  Loaded {len(docs)} document sections from {data_path}/")
     return docs
-
-
-def _ingest_dataframe(
-    df: pd.DataFrame,
-    file_path: str,
-    filename: str,
-    docs: list,
-    sheet: str = "",
-    rows_per_chunk: int = 50,
-    max_chunks: int = 150,
-) -> None:
-    """
-    Batch rows into chunks instead of one Document per row.
-    rows_per_chunk=10 means a 1,000-row sheet becomes ~100 chunks.
-    max_chunks=300 is a hard cap per sheet.
-    """
-    df = df.dropna(how="all").fillna("")
-    if df.empty:
-        return
-
-    print(f"  Ingesting {filename}" + (f"[{sheet}]" if sheet else "") + f" — {len(df)} rows")
-
-    chunk_count = 0
-    for start in range(0, len(df), rows_per_chunk):
-        if chunk_count >= max_chunks:
-            print(f"  Reached max_chunks={max_chunks} for {filename} — truncating")
-            break
-        batch = df.iloc[start : start + rows_per_chunk]
-        lines = []
-        for _, row in batch.iterrows():
-            line = " | ".join(f"{col}: {row[col]}" for col in df.columns if str(row[col]).strip())
-            if line.strip():
-                lines.append(line)
-        if lines:
-            docs.append(Document(
-                page_content=clean_text("\n".join(lines)),
-                metadata={
-                    "source":   file_path,
-                    "filename": filename,
-                    "sheet":    sheet,
-                    "rows":     f"{start+1}-{min(start+rows_per_chunk, len(df))}",
-                    "loader":   "tabular",
-                }
-            ))
-            chunk_count += 1
-
-    preview_rows = df.head(5).to_string(index=False)
-    summary = (
-        f"File: {filename}"
-        + (f" | Sheet: {sheet}" if sheet else "")
-        + f"\nColumns: {', '.join(df.columns)}\n"
-        + f"Row count: {len(df)}\n"
-        + f"Preview:\n{preview_rows}"
-    )
-    docs.append(Document(
-        page_content=clean_text(summary),
-        metadata={
-            "source":   file_path,
-            "filename": filename,
-            "sheet":    sheet,
-            "loader":   "tabular-summary",
-        }
-    ))
 
 
 # ---------- SPLIT DOCUMENTS ----------
 
 def split_documents(docs: list[Document]) -> list[Document]:
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,      # Larger chunks retain more technical context
-        chunk_overlap=150,    # Overlap prevents facts from being split across chunks
+        chunk_size=1000,
+        chunk_overlap=150,
         separators=["\n\n", "\n", ". ", " ", ""],
     )
     chunks = splitter.split_documents(docs)
@@ -284,7 +199,6 @@ def split_documents(docs: list[Document]) -> list[Document]:
 def get_embeddings() -> HuggingFaceEmbeddings:
     # Model is committed directly into the repo under models/all-MiniLM-L6-v2/
     # This avoids any HuggingFace network download on Streamlit Cloud.
-    # Path works both locally and on Streamlit Cloud (/mount/src/rag-chatbot/)
     base_dir   = os.path.dirname(os.path.abspath(__file__))
     local_path = os.path.join(base_dir, "models", "all-MiniLM-L6-v2")
 
@@ -292,17 +206,13 @@ def get_embeddings() -> HuggingFaceEmbeddings:
         model_name = local_path
         print(f"✅  Loading embedding model from local path: {local_path}")
     else:
-        # Fallback to HuggingFace download if local model not found
         model_name = "sentence-transformers/all-MiniLM-L6-v2"
         print(f"⚠️  Local model not found — downloading from HuggingFace")
 
-    model_kwargs  = {"device": "cpu"}
-    encode_kwargs = {"normalize_embeddings": True}
-
     embeddings = HuggingFaceEmbeddings(
         model_name=model_name,
-        model_kwargs=model_kwargs,
-        encode_kwargs=encode_kwargs,
+        model_kwargs={"device": "cpu"},
+        encode_kwargs={"normalize_embeddings": True},
     )
 
     # Validate embeddings loaded correctly
@@ -329,12 +239,10 @@ def create_vectorstore(chunks: list[Document]) -> FAISS:
 def build_index(data_path: str = "data") -> FAISS:
     docs   = load_documents(data_path)
     chunks = split_documents(docs)
-
     print(f"🔨  Building FAISS index over {len(chunks)} chunks …")
     vectorstore = create_vectorstore(chunks)
     vectorstore.save_local("faiss_index")
     print("✅  Index saved to faiss_index/")
-
     return vectorstore
 
 
@@ -344,20 +252,12 @@ def load_index() -> FAISS:
     if not os.path.exists("faiss_index"):
         print("Index not found. Building new index …")
         return build_index()
-
     embeddings = get_embeddings()
     return FAISS.load_local(
         "faiss_index",
         embeddings,
         allow_dangerous_deserialization=True,
     )
-
-
-# ---------- PUBLIC EXPORTS (used by index_manager.py) ----------
-# These names are imported directly:
-#   from rag_pipeline import clean_text, ocr_pdf, _ingest_dataframe,
-#                            OCR_AVAILABLE, DOCX_AVAILABLE
-# All are already defined above — this comment just makes the contract explicit.
 
 
 # ---------- FILTERED RETRIEVAL BY FILE ----------
@@ -370,11 +270,9 @@ def get_chunks_from_file(
 ) -> list[Document]:
     """Return the top-k chunks from a specific file matching the query."""
     all_docs = vectorstore.as_retriever(search_kwargs={"k": 20}).invoke(query)
-
     filtered = [
         d for d in all_docs
         if filename.lower() in d.metadata.get("source", "").lower()
         or filename.lower() in d.metadata.get("filename", "").lower()
     ]
-
     return filtered[:k]
