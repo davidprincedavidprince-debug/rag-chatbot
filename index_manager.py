@@ -186,7 +186,7 @@ def incremental_update(
     if not index_exists and not force_rebuild:
         print("No local index — checking Google Drive …")
         try:
-            from drive_sync import download_index, drive_index_exists
+            from hf_store import download_index, hf_index_exists as drive_index_exists
             if drive_index_exists():
                 print("Found index on Drive — downloading …")
                 if download_index():
@@ -206,7 +206,7 @@ def incremental_update(
         vs.save_local(INDEX_PATH)
         save_manifest(new_manifest)
         try:
-            from drive_sync import upload_index
+            from hf_store import upload_index
             upload_index()
         except Exception as e:
             print(f"Drive upload skipped: {e}")

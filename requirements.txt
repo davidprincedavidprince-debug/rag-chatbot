@@ -1,7 +1,6 @@
 streamlit
 google-genai
-google-api-python-client
-google-auth
+huggingface_hub
 langchain
 langchain-community
 langchain-huggingface

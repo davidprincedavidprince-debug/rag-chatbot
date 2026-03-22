@@ -30,10 +30,26 @@ When answering:
 # ---------- CACHE VECTOR DB ----------
 @st.cache_resource
 def get_vectorstore():
-    vs, _ = incremental_update()
+    # Try Drive first — avoids rebuilding from scratch on every deploy
+    try:
+        from hf_store import download_index, hf_index_exists as drive_index_exists
+        if drive_index_exists():
+            st.info("Downloading index from HuggingFace...")
+            download_index()
+    except Exception as e:
+        print(f"Drive check skipped: {e}")
+
+    vs, stats = incremental_update()
     return vs
 
-vectorstore = get_vectorstore()
+with st.spinner("Loading knowledge base... (first load may take a few minutes)"):
+    try:
+        vectorstore = get_vectorstore()
+        st.success("Knowledge base ready!", icon="✅")
+    except Exception as e:
+        st.error(f"Failed to load index: {e}")
+        st.info("Please click 'Force full rebuild' in the sidebar Advanced section.")
+        st.stop()
 
 # ---------- SIDEBAR ----------
 st.sidebar.title("⚙️  Settings")
