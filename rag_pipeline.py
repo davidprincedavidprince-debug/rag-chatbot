@@ -16,12 +16,12 @@ from langchain_community.document_loaders import TextLoader, PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
+
 # HuggingFaceEmbeddings moved to langchain-huggingface in langchain v0.3
 try:
     from langchain_huggingface import HuggingFaceEmbeddings
 except ImportError:
     from langchain_community.embeddings import HuggingFaceEmbeddings  # type: ignore
-
 
 # ---------- OPTIONAL IMPORTS (graceful fallback) ----------
 # OCR is disabled on Streamlit Cloud — too slow for free tier CPU.
@@ -282,34 +282,34 @@ def split_documents(docs: list[Document]) -> list[Document]:
 # ---------- EMBEDDINGS ----------
 
 def get_embeddings() -> HuggingFaceEmbeddings:
-    # all-MiniLM-L6-v2 is a PUBLIC model on HuggingFace.
-    # We set TRANSFORMERS_CACHE so the model is stored in a known location
-    # and reused across Streamlit reruns without re-downloading.
-    cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
-    os.makedirs(cache_dir, exist_ok=True)
-    os.environ["TRANSFORMERS_CACHE"]          = cache_dir
-    os.environ["HF_HOME"]                     = cache_dir
-    os.environ["SENTENCE_TRANSFORMERS_HOME"]  = cache_dir
-    model_kwargs = {"device": "cpu", "cache_folder": cache_dir}
+    # Model is committed directly into the repo under models/all-MiniLM-L6-v2/
+    # This avoids any HuggingFace network download on Streamlit Cloud.
+    # Path works both locally and on Streamlit Cloud (/mount/src/rag-chatbot/)
+    base_dir   = os.path.dirname(os.path.abspath(__file__))
+    local_path = os.path.join(base_dir, "models", "all-MiniLM-L6-v2")
 
-    #token = os.environ.get("HF_TOKEN", "") or os.environ.get("HUGGINGFACEHUB_API_TOKEN", "")
-    model_kwargs = {"device": "cpu"}
-    
-    # if token:
-        # model_kwargs["token"] = token
-        
-    # Full HuggingFace org/model path required by langchain-huggingface>=0.1
+    if os.path.isdir(local_path):
+        model_name = local_path
+        print(f"✅  Loading embedding model from local path: {local_path}")
+    else:
+        # Fallback to HuggingFace download if local model not found
+        model_name = "sentence-transformers/all-MiniLM-L6-v2"
+        print(f"⚠️  Local model not found — downloading from HuggingFace")
+
+    model_kwargs  = {"device": "cpu"}
+    encode_kwargs = {"normalize_embeddings": True}
+
     embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2",
+        model_name=model_name,
         model_kwargs=model_kwargs,
-        encode_kwargs = {"normalize_embeddings": True}
+        encode_kwargs=encode_kwargs,
     )
 
-    # Validate embeddings are real — not a dummy fallback
+    # Validate embeddings loaded correctly
     try:
         test_vec = embeddings.embed_query("test")
         if len(test_vec) < 100:
-            raise ValueError(f"Embedding dimension too small: {len(test_vec)} — model not loaded properly")
+            raise ValueError(f"Embedding dimension too small: {len(test_vec)}")
         print(f"✅  Embeddings validated — dimension: {len(test_vec)}")
     except Exception as e:
         raise RuntimeError(f"Embedding model failed to load properly: {e}")

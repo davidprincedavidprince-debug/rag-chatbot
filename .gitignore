@@ -36,3 +36,6 @@ service_account.json
 .env
 .toml
 huggingface-cli
+
+# ── Data files (private documents) ───────────────────────────────────
+data/
