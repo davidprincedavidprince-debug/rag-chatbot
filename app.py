@@ -1,6 +1,33 @@
 import streamlit as st
 from google import genai
 from google.genai import types
+import os
+
+# ── Pre-download embedding model at startup ────────────────────────────
+# This runs BEFORE get_vectorstore() so the model is cached locally.
+# Prevents "not a valid model identifier" error on Streamlit Cloud.
+@st.cache_resource
+def _preload_embedding_model():
+    """Download and cache the embedding model once at startup."""
+    cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
+    os.makedirs(cache_dir, exist_ok=True)
+    os.environ["TRANSFORMERS_CACHE"]         = cache_dir
+    os.environ["HF_HOME"]                    = cache_dir
+    os.environ["SENTENCE_TRANSFORMERS_HOME"] = cache_dir
+    try:
+        from sentence_transformers import SentenceTransformer
+        model = SentenceTransformer(
+            "sentence-transformers/all-MiniLM-L6-v2",
+            cache_folder=cache_dir,
+        )
+        print("  Embedding model pre-loaded successfully")
+        return True
+    except Exception as e:
+        print(f"  Model pre-load failed: {e}")
+        return False
+
+_preload_embedding_model()
+# ── End pre-download ───────────────────────────────────────────────────
 
 from rag_pipeline import get_chunks_from_file
 from index_manager import incremental_update

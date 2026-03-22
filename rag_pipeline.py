@@ -282,14 +282,23 @@ def split_documents(docs: list[Document]) -> list[Document]:
 # ---------- EMBEDDINGS ----------
 
 def get_embeddings() -> HuggingFaceEmbeddings:
-    
+    # all-MiniLM-L6-v2 is a PUBLIC model on HuggingFace.
+    # We set TRANSFORMERS_CACHE so the model is stored in a known location
+    # and reused across Streamlit reruns without re-downloading.
+    cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
+    os.makedirs(cache_dir, exist_ok=True)
+    os.environ["TRANSFORMERS_CACHE"]          = cache_dir
+    os.environ["HF_HOME"]                     = cache_dir
+    os.environ["SENTENCE_TRANSFORMERS_HOME"]  = cache_dir
+    model_kwargs = {"device": "cpu", "cache_folder": cache_dir}
 
     #token = os.environ.get("HF_TOKEN", "") or os.environ.get("HUGGINGFACEHUB_API_TOKEN", "")
     model_kwargs = {"device": "cpu"}
     
     # if token:
         # model_kwargs["token"] = token
-
+        
+    # Full HuggingFace org/model path required by langchain-huggingface>=0.1
     embeddings = HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2",
         model_kwargs=model_kwargs,
