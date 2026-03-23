@@ -247,9 +247,9 @@ for msg in st.session_state.messages:
 
 def get_adaptive_k(question: str) -> int:
     words = len(question.split())
-    if words <= 8:    return 3
-    elif words <= 20: return 5
-    else:             return 8
+    if words <= 8:    return 5
+    elif words <= 20: return 8
+    else:             return 12
 
 def trim_chunks(chunks, max_chars: int = 600):
     for c in chunks:

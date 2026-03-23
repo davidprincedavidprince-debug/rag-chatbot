@@ -109,7 +109,18 @@ def load_documents(data_path: str = "data") -> list[Document]:
         try:
             # ── TXT / MARKDOWN ──────────────────────────────────────
             if file.endswith((".txt", ".md")):
-                loaded = TextLoader(file_path, encoding="utf-8").load()
+                # Try multiple encodings — Windows often saves as cp1252
+                loaded = None
+                for enc in ["utf-8", "utf-8-sig", "cp1252", "latin-1"]:
+                    try:
+                        loaded = TextLoader(file_path, encoding=enc).load()
+                        print(f"  ✅  Loaded {file} with encoding: {enc}")
+                        break
+                    except Exception:
+                        continue
+                if loaded is None:
+                    print(f"  ⚠️  Could not load {file} with any encoding — skipping")
+                    continue
                 for d in loaded:
                     docs.append(Document(
                         page_content=clean_text(d.page_content),
